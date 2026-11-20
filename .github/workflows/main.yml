@@ -1,39 +1,87 @@
-name: Build Mod
+
+name: Build RealisticExplosions
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Unzip mod sources
-        run: unzip "realisticexplosions (1).zip" -d unpacked
-
-      - name: Setup Java 17
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: '21'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Find and extract source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="$(find . -type f -iname '*realisticexplosions*.zip' \
+            -not -path './.git/*' -print -quit)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: RealisticExplosions ZIP not found!"
+            echo "Files in repository:"
+            find . -maxdepth 4 -type f
+            exit 1
+          fi
+
+          echo "Found archive: $ZIP_FILE"
+
+          mkdir -p unpacked
+          unzip -o "$ZIP_FILE" -d unpacked
+
+          echo "Archive extracted successfully"
+
+      - name: Find Gradle project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_FILE="$(find unpacked -type f \
+            \( -name build.gradle -o -name build.gradle.kts \) \
+            -not -path '*/.gradle/*' \
+            -not -path '*/build/*' \
+            -print -quit)"
+
+          if [ -z "$BUILD_FILE" ]; then
+            echo "ERROR: Gradle project not found!"
+            find unpacked -maxdepth 5 -type f
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$BUILD_FILE")"
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Gradle project: $PROJECT_DIR"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.1.1'
+          gradle-version: '8.12.1'
 
-      - name: Build with Gradle
-        working-directory: unpacked/realisticexplosions
-        run: gradle build
+      - name: Build mod
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: gradle clean build --no-daemon --stacktrace
 
-      - name: Upload JAR
+      - name: Upload compiled JAR
         uses: actions/upload-artifact@v4
         with:
-          name: realisticexplosions-jar
-          path: unpacked/realisticexplosions/build/libs/*-1.0.0.jar
+          name: RealisticExplosions
+          path: ${{ steps.project.outputs.dir }}/build/libs/*.jar
           if-no-files-found: error
+          retention-days: 14
